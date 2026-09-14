@@ -1,15 +1,15 @@
 {
   "files": {
-    "main.css": "/3denvs/static/css/main.46ff2d84.css",
-    "main.js": "/3denvs/static/js/main.c0248350.js",
-    "static/js/787.4de80b09.chunk.js": "/3denvs/static/js/787.4de80b09.chunk.js",
-    "index.html": "/3denvs/index.html",
-    "main.46ff2d84.css.map": "/3denvs/static/css/main.46ff2d84.css.map",
-    "main.c0248350.js.map": "/3denvs/static/js/main.c0248350.js.map",
-    "787.4de80b09.chunk.js.map": "/3denvs/static/js/787.4de80b09.chunk.js.map"
+    "main.css": "/minigame/static/css/main.d2eb333f.css",
+    "main.js": "/minigame/static/js/main.ce6a18c1.js",
+    "static/js/787.eed95f26.chunk.js": "/minigame/static/js/787.eed95f26.chunk.js",
+    "index.html": "/minigame/index.html",
+    "main.d2eb333f.css.map": "/minigame/static/css/main.d2eb333f.css.map",
+    "main.ce6a18c1.js.map": "/minigame/static/js/main.ce6a18c1.js.map",
+    "787.eed95f26.chunk.js.map": "/minigame/static/js/787.eed95f26.chunk.js.map"
   },
   "entrypoints": [
-    "static/css/main.46ff2d84.css",
-    "static/js/main.c0248350.js"
+    "static/css/main.d2eb333f.css",
+    "static/js/main.ce6a18c1.js"
   ]
 }
