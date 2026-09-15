@@ -10,26 +10,48 @@ const COLLECTIBLE_SCALE = 0.35;
 const MAX_JUMPS = 2;
 const CAMERA_DISTANCE = 8;
 const CAMERA_HEIGHT = 3;
+const CAMERA_FOLLOW_RATE = 24;
 const MOUSE_SENSITIVITY = 0.0025;
 const MAX_LOOK_PITCH = 1.2;
 const UP = new THREE.Vector3(0, 1, 0);
 
 const GROUND_TOP_Y = -1;
 const GROUND_SIZE = 40;
-const ARENA_SPREAD = 1.8;
 
-const OBSTACLES = [
-  { x: 5, z: 5, type: 'box', size: [1.4, 0.8, 1.4], color: '#ff5252' },
-  { x: -6, z: 3, type: 'cylinder', radius: 0.9, height: 1.6, color: '#448aff' },
-  { x: 4, z: -6, type: 'box', size: [1, 2.4, 1], color: '#69f0ae' },
-  { x: -4.5, z: -4.5, type: 'sphere', radius: 0.9, color: '#ffd740' },
-  { x: 1, z: 8, type: 'cylinder', radius: 1.1, height: 2.2, color: '#e040fb' },
-  { x: 8, z: -1.5, type: 'box', size: [1.3, 1.3, 1.3], color: '#40c4ff' },
-  { x: -8, z: -2, type: 'box', size: [1.8, 0.6, 1.8], color: '#ff8a65' },
-  { x: 6.5, z: 6.5, type: 'cylinder', radius: 0.7, height: 1.1, color: '#7c4dff' },
-  { x: -2, z: 7, type: 'sphere', radius: 1.1, color: '#26c6da' },
-  { x: 2.5, z: -8, type: 'box', size: [1.1, 1.9, 1.1], color: '#d4e157' },
+const GOLDEN_ANGLE = 2.399963229728653;
+
+function spiralXZ(index, count, radius, phase = 0) {
+  const angle = index * GOLDEN_ANGLE + phase;
+  const r = radius * Math.sqrt((index + 0.5) / count);
+  return [Math.cos(angle) * r, Math.sin(angle) * r];
+}
+
+const OBSTACLE_COUNT = 18;
+const OBSTACLE_RADIUS = 16;
+const OBSTACLE_TYPES = ['box', 'cylinder', 'box', 'sphere', 'cylinder', 'box', 'box', 'cylinder'];
+const OBSTACLE_COLORS = [
+  '#ff5252', '#448aff', '#69f0ae', '#ffd740', '#e040fb', '#40c4ff',
+  '#ff8a65', '#7c4dff', '#26c6da', '#d4e157', '#ff4081', '#8bc34a',
 ];
+
+const OBSTACLES = Array.from({ length: OBSTACLE_COUNT }, (_, i) => {
+  const [x, z] = spiralXZ(i, OBSTACLE_COUNT, OBSTACLE_RADIUS);
+  const type = OBSTACLE_TYPES[i % OBSTACLE_TYPES.length];
+  const color = OBSTACLE_COLORS[i % OBSTACLE_COLORS.length];
+  if (type === 'cylinder') {
+    return { x, z, type, radius: 0.6 + (i % 4) * 0.18, height: 0.8 + (i % 5) * 0.35, color };
+  }
+  if (type === 'sphere') {
+    return { x, z, type, radius: 0.7 + (i % 3) * 0.2, color };
+  }
+  return {
+    x,
+    z,
+    type,
+    size: [1 + (i % 3) * 0.2, 0.6 + (i % 6) * 0.35, 1 + ((i + 1) % 3) * 0.2],
+    color,
+  };
+});
 
 function obstacleCenterY(obs) {
   if (obs.type === 'cylinder') return GROUND_TOP_Y + obs.height / 2;
@@ -44,7 +66,9 @@ function obstacleTopY(obs) {
 }
 
 const FLAT_TOP_OBSTACLES = OBSTACLES.filter((o) => o.type !== 'sphere');
-const PLATFORM_MONKEY_COUNT = Math.min(4, FLAT_TOP_OBSTACLES.length);
+const PLATFORM_MONKEY_COUNT = Math.min(8, FLAT_TOP_OBSTACLES.length);
+const TOTAL_COLLECTIBLES = 26;
+const COLLECTIBLE_SPIRAL_RADIUS = 17;
 
 function useKeyboard() {
   const keys = useRef({});
@@ -227,6 +251,77 @@ function ControllableCube({ geometry, position, rigidBodyRef }) {
   );
 }
 
+const AI_SPEED = 3.3;
+const AI_JUMP_SPEED = 6;
+
+function AICube({ geometry, position, collectibleRefs }) {
+  const rigidBody = useRef();
+  const jumpsUsed = useRef(0);
+  const aiMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: 'black' }), []);
+  const moveVec = useRef(new THREE.Vector3());
+
+  useFrame(() => {
+    if (!rigidBody.current) return;
+
+    const myPos = rigidBody.current.translation();
+    let nearest = null;
+    let nearestDistSq = Infinity;
+    for (const ref of collectibleRefs.current) {
+      if (!ref) continue;
+      const t = ref.translation();
+      const dx = t.x - myPos.x;
+      const dz = t.z - myPos.z;
+      const d = dx * dx + dz * dz;
+      if (d < nearestDistSq) {
+        nearestDistSq = d;
+        nearest = t;
+      }
+    }
+
+    const currentVel = rigidBody.current.linvel();
+    if (nearest) {
+      const dx = nearest.x - myPos.x;
+      const dz = nearest.z - myPos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 0.3) {
+        moveVec.current.set(dx / dist, 0, dz / dist).multiplyScalar(AI_SPEED);
+        rigidBody.current.setLinvel(
+          { x: moveVec.current.x, y: currentVel.y, z: moveVec.current.z },
+          true
+        );
+      } else {
+        rigidBody.current.setLinvel({ x: 0, y: currentVel.y, z: 0 }, true);
+      }
+
+      if (nearest.y - myPos.y > 0.6 && dist < 3 && jumpsUsed.current < MAX_JUMPS) {
+        rigidBody.current.setLinvel({ x: currentVel.x, y: AI_JUMP_SPEED, z: currentVel.z }, true);
+        jumpsUsed.current += 1;
+      }
+    } else {
+      rigidBody.current.setLinvel({ x: 0, y: currentVel.y, z: 0 }, true);
+    }
+  });
+
+  return (
+    <RigidBody
+      ref={rigidBody}
+      position={position}
+      colliders="hull"
+      restitution={0}
+      friction={0.8}
+      angularDamping={0.6}
+      userData={{ isAI: true }}
+      onCollisionEnter={(event) => {
+        if (event.other?.rigidBodyObject?.userData?.isGround) {
+          jumpsUsed.current = 0;
+        }
+      }}
+    >
+      <mesh geometry={geometry} material={aiMaterial} castShadow receiveShadow />
+    </RigidBody>
+  );
+}
+
 const COLLECT_ANIM_DURATION = 0.4;
 
 function CollectPopEffect({ geometry, material, position, scale }) {
@@ -260,11 +355,16 @@ function CollectPopEffect({ geometry, material, position, scale }) {
   );
 }
 
-function CollectibleCube({ geometry, material, gradientMap, position, rotation, scale, onCollect }) {
+function CollectibleCube({ geometry, material, gradientMap, position, rotation, scale, onCollect, bodyRefCallback }) {
   const [phase, setPhase] = useState('idle');
   const [popAt, setPopAt] = useState(null);
   const bodyRef = useRef();
   const toonMaterial = useToonMaterial(material, gradientMap);
+
+  const setBodyRef = (el) => {
+    bodyRef.current = el;
+    if (bodyRefCallback) bodyRefCallback(el);
+  };
 
   if (phase === 'collecting') {
     return (
@@ -274,7 +374,7 @@ function CollectibleCube({ geometry, material, gradientMap, position, rotation, 
 
   return (
     <RigidBody
-      ref={bodyRef}
+      ref={setBodyRef}
       position={position}
       rotation={rotation}
       scale={scale}
@@ -282,12 +382,14 @@ function CollectibleCube({ geometry, material, gradientMap, position, rotation, 
       restitution={0.3}
       friction={0.8}
       onCollisionEnter={(event) => {
-        if (event.other?.rigidBodyObject?.userData?.isPlayer) {
+        const otherData = event.other?.rigidBodyObject?.userData;
+        if (otherData?.isPlayer || otherData?.isAI) {
           const t = bodyRef.current.translation();
           setPopAt([t.x, t.y, t.z]);
           setPhase('collecting');
+          if (bodyRefCallback) bodyRefCallback(null);
           playCollectSound();
-          onCollect();
+          onCollect(otherData.isAI ? 'ai' : 'player');
         }
       }}
     >
@@ -330,10 +432,18 @@ function BlenderPhysicsScene({ onTotal, onCollect, playerRigidBodyRef }) {
     () => Object.keys(nodes).filter((name) => name.startsWith('Cubo_')),
     [nodes]
   );
+  const collectibleSlots = useMemo(
+    () =>
+      fallingNames.length
+        ? Array.from({ length: TOTAL_COLLECTIBLES }, (_, i) => fallingNames[i % fallingNames.length])
+        : [],
+    [fallingNames]
+  );
+  const collectibleRefs = useRef([]);
 
   useEffect(() => {
-    onTotal(fallingNames.length);
-  }, [fallingNames.length, onTotal]);
+    onTotal(collectibleSlots.length);
+  }, [collectibleSlots.length, onTotal]);
 
   return (
     <>
@@ -342,19 +452,20 @@ function BlenderPhysicsScene({ onTotal, onCollect, playerRigidBodyRef }) {
         position={[0, 3, 0]}
         rigidBodyRef={playerRigidBodyRef}
       />
-      {fallingNames.map((name, i) => {
+      <AICube geometry={nodes.Cube.geometry} position={[4, 3, 4]} collectibleRefs={collectibleRefs} />
+      {collectibleSlots.map((name, i) => {
         const node = nodes[name];
         let position;
         if (i < PLATFORM_MONKEY_COUNT) {
           const obs = FLAT_TOP_OBSTACLES[i];
           position = [obs.x, obstacleTopY(obs) + 3, obs.z];
         } else {
-          const [nx, ny, nz] = node.position.toArray();
-          position = [nx * ARENA_SPREAD, ny, nz * ARENA_SPREAD];
+          const [x, z] = spiralXZ(i, collectibleSlots.length, COLLECTIBLE_SPIRAL_RADIUS, Math.PI / 3);
+          position = [x, 4 + (i % 5) * 0.6, z];
         }
         return (
           <CollectibleCube
-            key={name}
+            key={`${name}-${i}`}
             geometry={node.geometry}
             material={node.material}
             gradientMap={gradientMap}
@@ -362,6 +473,9 @@ function BlenderPhysicsScene({ onTotal, onCollect, playerRigidBodyRef }) {
             rotation={[node.rotation.x, node.rotation.y, node.rotation.z]}
             scale={node.scale.toArray().map((s) => s * COLLECTIBLE_SCALE)}
             onCollect={onCollect}
+            bodyRefCallback={(el) => {
+              collectibleRefs.current[i] = el;
+            }}
           />
         );
       })}
@@ -412,7 +526,7 @@ function CameraRig({ playerRigidBodyRef, onLockChange }) {
   const desiredCamPos = useRef(new THREE.Vector3());
   const lookAtVec = useRef(new THREE.Vector3());
 
-  useFrame(({ camera }) => {
+  useFrame(({ camera }, delta) => {
     if (!playerRigidBodyRef.current) return;
 
     const t = playerRigidBodyRef.current.translation();
@@ -425,7 +539,8 @@ function CameraRig({ playerRigidBodyRef, onLockChange }) {
       targetVec.current.z + Math.cos(yaw.current) * horizontalDist
     );
 
-    camera.position.lerp(desiredCamPos.current, 0.2);
+    const followStrength = 1 - Math.exp(-CAMERA_FOLLOW_RATE * delta);
+    camera.position.lerp(desiredCamPos.current, followStrength);
     lookAtVec.current.set(targetVec.current.x, targetVec.current.y + 0.5, targetVec.current.z);
     camera.lookAt(lookAtVec.current);
   });
@@ -490,9 +605,25 @@ const lockOverlayStyle = {
   cursor: 'pointer',
 };
 
+const instructionsListStyle = {
+  listStyle: 'none',
+  padding: 0,
+  margin: '12px 0 0',
+  fontSize: 15,
+  lineHeight: 1.8,
+  textAlign: 'left',
+};
+
+function decideOutcome(collected, aiCollected) {
+  if (collected > aiCollected) return 'won';
+  if (aiCollected > collected) return 'lost';
+  return 'draw';
+}
+
 export default function Scene() {
   const [total, setTotal] = useState(0);
   const [collected, setCollected] = useState(0);
+  const [aiCollected, setAiCollected] = useState(0);
   const [timeLeft, setTimeLeft] = useState(GAME_DURATION);
   const [status, setStatus] = useState('playing');
   const [resetKey, setResetKey] = useState(0);
@@ -505,25 +636,34 @@ export default function Scene() {
     document.querySelector('canvas')?.requestPointerLock();
   };
 
-  useEffect(() => {
-    if (total > 0 && collected >= total && status === 'playing') {
-      setStatus('won');
+  const handleCollect = (collector) => {
+    if (collector === 'ai') {
+      setAiCollected((c) => c + 1);
+    } else {
+      setCollected((c) => c + 1);
     }
-  }, [collected, total, status]);
+  };
+
+  useEffect(() => {
+    if (total > 0 && collected + aiCollected >= total && status === 'playing') {
+      setStatus(decideOutcome(collected, aiCollected));
+    }
+  }, [collected, aiCollected, total, status]);
 
   useEffect(() => {
     if (status !== 'playing') return undefined;
     if (timeLeft <= 0) {
-      setStatus('lost');
+      setStatus(decideOutcome(collected, aiCollected));
       return undefined;
     }
     const id = setTimeout(() => setTimeLeft((t) => t - 1), 1000);
     return () => clearTimeout(id);
-  }, [status, timeLeft]);
+  }, [status, timeLeft, collected, aiCollected]);
 
   const handleRestart = () => {
     setResetKey((k) => k + 1);
     setCollected(0);
+    setAiCollected(0);
     setTimeLeft(GAME_DURATION);
     setStatus('playing');
   };
@@ -532,15 +672,19 @@ export default function Scene() {
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div style={hudStyle}>
         <span>⏱ {timeLeft}s</span>
-        <span>🐵 {collected}/{total}</span>
+        <span>🧍 Tu: {collected}</span>
+        <span>🤖 AI: {aiCollected}</span>
+        <span>🐵 {collected + aiCollected}/{total}</span>
       </div>
       {status !== 'playing' && (
         <div style={endOverlayStyle}>
           <div style={{ fontSize: 36, fontWeight: 700 }}>
-            {status === 'won' ? '🎉 Hai vinto!' : '⏱ Tempo scaduto!'}
+            {status === 'won' && '🎉 Hai vinto!'}
+            {status === 'lost' && '🤖 Ha vinto l\'AI!'}
+            {status === 'draw' && '🤝 Pareggio!'}
           </div>
           <div style={{ fontSize: 18, opacity: 0.85 }}>
-            Raccolte {collected}/{total}
+            Tu {collected} — AI {aiCollected} (totale {collected + aiCollected}/{total})
           </div>
           <button onClick={handleRestart} style={restartButtonStyle}>
             Rigioca
@@ -549,8 +693,15 @@ export default function Scene() {
       )}
       {status === 'playing' && !pointerLocked && (
         <div style={lockOverlayStyle} onClick={requestPointerLock}>
-          <div style={{ fontSize: 24, fontWeight: 700 }}>🖱 Clicca per guardarti intorno</div>
-          <div style={{ fontSize: 14, opacity: 0.8 }}>ESC per uscire dal mouse look</div>
+          <div style={{ fontSize: 24, fontWeight: 700 }}>🖱 Clicca per iniziare</div>
+          <ul style={instructionsListStyle}>
+            <li>🎯 Raccogli più scimmiette dell'AI prima che scada il tempo</li>
+            <li>⌨️ WASD — muoviti (rispetto alla camera)</li>
+            <li>🖱️ Mouse — guardati intorno</li>
+            <li>␣ Spazio — salta (doppio salto disponibile)</li>
+            <li>◀▶▲▼ Frecce — ruota su te stesso</li>
+            <li>ESC — esci dal mouse look</li>
+          </ul>
         </div>
       )}
       <Canvas shadows camera={{ position: [4, 3, 8], fov: 50 }}>
@@ -573,7 +724,7 @@ export default function Scene() {
             <BlenderPhysicsScene
               key={resetKey}
               onTotal={setTotal}
-              onCollect={() => setCollected((c) => c + 1)}
+              onCollect={handleCollect}
               playerRigidBodyRef={playerRigidBodyRef}
             />
           </Physics>
